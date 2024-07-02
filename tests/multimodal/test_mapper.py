@@ -2,17 +2,15 @@ import numpy as np
 import pytest
 from transformers import CLIPImageProcessor, LlavaNextImageProcessor
 
-from vllm.config import ModelConfig, VisionLanguageConfig
+from vllm.config import ModelConfig
 from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.multimodal.image import ImagePixelData
 
 from ..conftest import _STR_DTYPE_TO_TORCH_DTYPE
 
 
 @pytest.mark.parametrize("dtype", ["half", "float"])
-def test_clip_image_processor(hf_images, dtype):
+def test_clip_image_processor(image_assets, dtype):
     MODEL_NAME = "llava-hf/llava-1.5-7b-hf"
-    IMAGE_HEIGHT = IMAGE_WIDTH = 560
 
     hf_processor = CLIPImageProcessor.from_pretrained(MODEL_NAME)
     assert isinstance(hf_processor, CLIPImageProcessor)
@@ -26,24 +24,15 @@ def test_clip_image_processor(hf_images, dtype):
         dtype=dtype,
         revision=None,
     )
-    vlm_config = VisionLanguageConfig(
-        image_input_type=VisionLanguageConfig.ImageInputType.PIXEL_VALUES,
-        image_token_id=32000,
-        image_input_shape=(1, 3, IMAGE_HEIGHT, IMAGE_WIDTH),
-        image_feature_size=576,
-        image_processor=MODEL_NAME,
-        image_processor_revision=None,
-    )
 
-    for image in hf_images:
+    for asset in image_assets:
         hf_result = hf_processor.preprocess(
-            image,
+            asset.pil_image,
             return_tensors="pt",
         ).to(dtype=_STR_DTYPE_TO_TORCH_DTYPE[dtype])
-        vllm_result = MULTIMODAL_REGISTRY.process_input(
-            ImagePixelData(image),
-            model_config=model_config,
-            vlm_config=vlm_config,
+        vllm_result = MULTIMODAL_REGISTRY.map_input(
+            model_config,
+            {"image": asset.pil_image},
         )
 
         assert hf_result.keys() == vllm_result.keys()
@@ -59,9 +48,8 @@ def test_clip_image_processor(hf_images, dtype):
     reason="Inconsistent image processor being used due to lack "
     "of support for dynamic image token replacement")
 @pytest.mark.parametrize("dtype", ["half", "float"])
-def test_llava_next_image_processor(hf_images, dtype):
+def test_llava_next_image_processor(image_assets, dtype):
     MODEL_NAME = "llava-hf/llava-v1.6-34b-hf"
-    IMAGE_HEIGHT = IMAGE_WIDTH = 560
 
     hf_processor = LlavaNextImageProcessor.from_pretrained(MODEL_NAME)
     assert isinstance(hf_processor, LlavaNextImageProcessor)
@@ -75,24 +63,15 @@ def test_llava_next_image_processor(hf_images, dtype):
         dtype=dtype,
         revision=None,
     )
-    vlm_config = VisionLanguageConfig(
-        image_input_type=VisionLanguageConfig.ImageInputType.PIXEL_VALUES,
-        image_token_id=64000,
-        image_input_shape=(1, 3, IMAGE_HEIGHT, IMAGE_WIDTH),
-        image_feature_size=2928,
-        image_processor=MODEL_NAME,
-        image_processor_revision=None,
-    )
 
-    for image in hf_images:
+    for asset in image_assets:
         hf_result = hf_processor.preprocess(
-            image,
+            asset.pil_image,
             return_tensors="pt",
         ).to(dtype=_STR_DTYPE_TO_TORCH_DTYPE[dtype])
-        vllm_result = MULTIMODAL_REGISTRY.process_input(
-            ImagePixelData(image),
-            model_config=model_config,
-            vlm_config=vlm_config,
+        vllm_result = MULTIMODAL_REGISTRY.map_input(
+            model_config,
+            {"image": asset.pil_image},
         )
 
         assert hf_result.keys() == vllm_result.keys()
@@ -107,9 +86,8 @@ def test_llava_next_image_processor(hf_images, dtype):
 @pytest.mark.xfail(
     reason="Example image pixels were not processed using HuggingFace")
 @pytest.mark.parametrize("dtype", ["float"])
-def test_image_pixel_types(hf_images, vllm_image_tensors, dtype):
+def test_image_pixel_types(image_assets, dtype):
     MODEL_NAME = "llava-hf/llava-1.5-7b-hf"
-    IMAGE_HEIGHT = IMAGE_WIDTH = 560
 
     model_config = ModelConfig(
         model=MODEL_NAME,
@@ -120,25 +98,14 @@ def test_image_pixel_types(hf_images, vllm_image_tensors, dtype):
         dtype=dtype,
         revision=None,
     )
-    vlm_config = VisionLanguageConfig(
-        image_input_type=VisionLanguageConfig.ImageInputType.PIXEL_VALUES,
-        image_token_id=32000,
-        image_input_shape=(1, 3, IMAGE_HEIGHT, IMAGE_WIDTH),
-        image_feature_size=576,
-        image_processor=MODEL_NAME,
-        image_processor_revision=None,
-    )
-
-    for image, tensor in zip(hf_images, vllm_image_tensors):
-        image_result = MULTIMODAL_REGISTRY.process_input(
-            ImagePixelData(image),
-            model_config=model_config,
-            vlm_config=vlm_config,
+    for asset in image_assets:
+        image_result = MULTIMODAL_REGISTRY.map_input(
+            model_config,
+            {"image": asset.pil_image},
         )
-        tensor_result = MULTIMODAL_REGISTRY.process_input(
-            ImagePixelData(tensor),
-            model_config=model_config,
-            vlm_config=vlm_config,
+        tensor_result = MULTIMODAL_REGISTRY.map_input(
+            model_config,
+            {"image": asset.pil_image},
         )
 
         assert image_result.keys() == tensor_result.keys()
