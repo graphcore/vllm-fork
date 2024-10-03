@@ -133,7 +133,7 @@ class MultiHeadDotProductAttention(nn.Module):
             assert tp_size % self.total_num_kv_heads == 0
 
         self.num_kv_heads = max(1, self.total_num_kv_heads // tp_size)
-        
+
         self.wq = ColumnParallelLinear(
             nlayers * self.hidden_size,
             self.total_num_heads * self.head_dim,
@@ -215,7 +215,7 @@ class MultiHeadDotProductAttention(nn.Module):
         else:
             from xformers import ops as xops
             output = xops.memory_efficient_attention_forward(xq, xk, xv, p=0)
-        
+
         output = rearrange(output, "b s h d -> b s (h d)").contiguous()
         output, _ = self.wo(output)
 
@@ -359,7 +359,7 @@ class MolmoAttention(nn.Module):
             assert self.total_num_kv_heads % tp_size == 0
         else:
             assert tp_size % self.total_num_kv_heads == 0
-        
+
         self.num_kv_heads = max(1, self.total_num_kv_heads // tp_size)
         self.head_dim = self.hidden_size // self.total_num_heads
         self.q_size = self.num_heads * self.head_dim
@@ -594,7 +594,7 @@ class MolmoVisionBackbone(nn.Module):
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
         batch_size, num_image = images.shape[:2]
         image_features, cls_embed = self.encode_image(images)
-        
+
         og_dtype = image_features.dtype
         assert image_masks is not None
         pad_embed = self.pad_embed[:, None, None, None, :]
@@ -781,7 +781,7 @@ def dummy_data_for_molmo(
             f"Molmo cannot process {max_crops} crops in a prompt, "
             "please increase max_model_len or reduce number of crops"
         )
-    
+
     # The vertical image has the maximum number of image tokens due to column tokens.
     tiling = (max_crops, 1)
     total_margin_pixels = base_image_input_d * (right_margin + left_margin)
@@ -834,15 +834,20 @@ def pad_images(
 
 
 def input_processor_for_molmo(ctx: InputContext, llm_inputs: LLMInputs):
-    prompt = llm_inputs["prompt"]
+    prompt = llm_inputs.get("prompt")
     multi_modal_data = llm_inputs.get("multi_modal_data")
-    image = multi_modal_data.get("image")
+    if multi_modal_data is None:
+        image = None
+    else:
+        image = multi_modal_data.get("image")
     processor = cached_get_processor(ctx.model_config.model, trust_remote_code=True)
 
-    if re.match(r"^User:[\s\S]*?(Assistant:)*$", prompt):
+    if prompt is not None and re.match(r"^User:[\s\S]*?(Assistant:)*$", prompt):
         out = processor.process(prompt, image, message_format="none")
-    else:
+    elif prompt is not None:
         out = processor.process(prompt, image)
+    else:
+        out = processor.process(None, image, tokens=llm_inputs["prompt_token_ids"])
 
     image_processor = processor.image_processor
     max_total_crops = 1 + image_processor.max_crops
@@ -880,9 +885,9 @@ def input_processor_for_molmo(ctx: InputContext, llm_inputs: LLMInputs):
     )
     if image_masks is not None:
         image_data["image_masks"] = image_masks
-    
+
     image_data["seq_len"] = torch.tensor(len(out["input_ids"]), dtype=torch.long)
-    
+
     multi_modal_data = dict(image=image_data)
 
     return LLMInputs(
@@ -899,14 +904,14 @@ def input_processor_for_molmo(ctx: InputContext, llm_inputs: LLMInputs):
 class MolmoForCausalLM(nn.Module, SupportsMultiModal):
 
     def __init__(
-        self, 
+        self,
         config: PretrainedConfig,
         multimodal_config: Optional[MultiModalConfig] = None,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[Mapping[str, Any]] = None,
     ):
         super().__init__()
- 
+
         self.config = config
         self.multimodal_config = multimodal_config
 
@@ -925,7 +930,7 @@ class MolmoForCausalLM(nn.Module, SupportsMultiModal):
 
         self.logits_processor = LogitsProcessor(config.embedding_size or config.vocab_size)
         self.sampler = Sampler()
-        
+
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -976,7 +981,7 @@ class MolmoForCausalLM(nn.Module, SupportsMultiModal):
             input_ids = None
         else:
             inputs_embeds = None
-        
+
         hidden_states = self.model(
             input_ids=input_ids,
             positions=positions,
@@ -986,7 +991,7 @@ class MolmoForCausalLM(nn.Module, SupportsMultiModal):
         )
 
         return hidden_states
-         
+
     def compute_logits(self, hidden_states: torch.Tensor,
                        sampling_metadata: SamplingMetadata) -> torch.Tensor:
         logits = self.logits_processor(self.lm_head, hidden_states,
@@ -1018,11 +1023,11 @@ class MolmoForCausalLM(nn.Module, SupportsMultiModal):
             if "wte.embedding" in name:
                 embedding_weight["embedding"] = loaded_weight
                 continue
-                
+
             if "wte.new_embedding" in name:
                 embedding_weight["new_embedding"] = loaded_weight
                 continue
-           
+
             if "vision_backbone" in name:
                 if name.startswith("model"):
                     name = name[len("model."):]
@@ -1042,16 +1047,16 @@ class MolmoForCausalLM(nn.Module, SupportsMultiModal):
 
                 if "transformer.blocks" in name:
                     name = name.replace("transformer.blocks", "layers")
-    
+
                 if "attn_out" in name:
                     name = name.replace("attn_out", "self_attn.o_proj")
-                
+
                 if "att_proj" in name:
                     name = name.replace("att_proj", "self_attn.qkv_proj")
-                
+
                 if 'q_norm' in name:
                     name = name.replace("q_norm", "self_attn.q_norm")
-                
+
                 if 'k_norm' in name:
                     name = name.replace("k_norm", "self_attn.k_norm")
 
@@ -1067,10 +1072,10 @@ class MolmoForCausalLM(nn.Module, SupportsMultiModal):
                     else:
                         # lm head
                         name = name.replace("model.transformer.ff_out", "lm_head")
-                    
+
                 if "attn_norm" in name:
                     name = name.replace("attn_norm", "input_layernorm")
-                
+
                 if "ff_norm" in name:
                     name = name.replace("ff_norm", "post_attention_layernorm")
             try:
@@ -1086,7 +1091,7 @@ class MolmoForCausalLM(nn.Module, SupportsMultiModal):
                 weight_loader(param, loaded_weight)
             except:
                 raise
-        
+
         gate_up_proj_weight = torch.cat(
             [projector_weight["gate_proj"], projector_weight["up_proj"]], dim=0
         )
