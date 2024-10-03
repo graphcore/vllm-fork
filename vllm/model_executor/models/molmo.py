@@ -745,7 +745,7 @@ def get_max_tokens(max_crops, crop_patches, left_margin, right_margin, pooling_s
 
 
 def get_max_molmo_image_tokens(ctx: InputContext) -> int:
-    processor = cached_get_processor(ctx.model_config.model, trust_remote_code=True)
+    processor = cached_get_processor(ctx.model_config.model, trust_remote_code=True, revision=ctx.model_config.code_revision)
     image_processor = processor.image_processor
     max_llm_image_tokens = get_max_tokens(
         image_processor.max_crops,
@@ -767,7 +767,7 @@ def image_input_mapper_for_molmo(
 def dummy_data_for_molmo(
     ctx: InputContext, seq_len: int, mm_counts: Mapping[str, int]
 ):
-    processor = cached_get_processor(ctx.model_config.model, trust_remote_code=True)
+    processor = cached_get_processor(ctx.model_config.model, trust_remote_code=True, revision=ctx.model_config.code_revision)
     image_processor = processor.image_processor
 
     base_image_input_d = image_processor.image_patch_size
@@ -840,7 +840,7 @@ def input_processor_for_molmo(ctx: InputContext, llm_inputs: LLMInputs):
         image = None
     else:
         image = multi_modal_data.get("image")
-    processor = cached_get_processor(ctx.model_config.model, trust_remote_code=True)
+    processor = cached_get_processor(ctx.model_config.model, trust_remote_code=True, revision=ctx.model_config.code_revision)
 
     if prompt is not None and re.match(r"^User:[\s\S]*?(Assistant:)*$", prompt):
         out = processor.process(prompt, image, message_format="none")
